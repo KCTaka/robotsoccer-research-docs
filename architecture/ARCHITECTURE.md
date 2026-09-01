@@ -2,7 +2,7 @@
 
 - Status: Living document
 - Last updated: 2026-09-01
-- Covered decisions: real-time actuation, hardware abstraction, safety and fault management, Zenoh middleware, behaviour, game state, and team networking, the containerized runtime, and simulation, validation, and replay
+- Covered decisions: real-time actuation, hardware abstraction, safety and fault management, Zenoh middleware, behaviour, game state, and team networking, the containerized runtime, simulation, validation, and replay, and observability and competition operations
 
 ## Scope
 
@@ -14,8 +14,11 @@ This document is the current accepted system skeleton. It summarizes, but does n
 - [ADR-005: Behaviour, Game State, and Team Networking](ADR-005-behavior-game-state-and-team-networking.md)
 - [ADR-006: Runtime, Container, and Compute Architecture](ADR-006-runtime-and-containers.md)
 - [ADR-007: Simulation, Software-in-the-Loop, Hardware-in-the-Loop, and Deterministic Replay](ADR-007-simulation-sil-hil.md)
+- [ADR-008: Observability, Telemetry, and Competition Operations](ADR-008-observability-and-operations.md)
 
-Locomotion, estimation, perception, model generation, observability, and team delivery workflow remain to be decided topic by topic. Diagrams show placeholders only where needed to explain an accepted boundary; placeholders are not component selections.
+Requirements that these decisions place on the mechanical, electrical, and firmware domains are tracked in [HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md).
+
+Locomotion, estimation, perception, model generation, and team delivery workflow remain to be decided topic by topic. Diagrams show placeholders only where needed to explain an accepted boundary; placeholders are not component selections.
 
 ## Architectural invariants
 
@@ -39,6 +42,11 @@ Locomotion, estimation, perception, model generation, observability, and team de
 18. Fault injection is a transport plugin selected by configuration. Every component above the transport boundary is digest-identical between a fault campaign and the release it qualifies.
 19. Software-in-the-loop establishes logical correctness only. No timing property may be claimed from it.
 20. The control loop is recorded at full rate in-cycle, independently of `rosbag2`, because the same rule that keeps the loop real-time safe keeps it off the ROS graph.
+21. Telemetry planes are correlated by control-cycle sequence number, never by timestamp. Wall-clock correlation fails silently when the system clock steps.
+22. Neither recorded telemetry plane touches the network. A one-way UDP health beacon is the only external channel while the robot is playing, because the rules cap each robot at 1 Mbit/s and prohibit any transmission toward a playing robot.
+23. The robot must be diagnosable without being touched. Physical contact makes the robot in service and resets its penalty clock, so every diagnostic that requires contact is unavailable during play.
+24. A robot that cannot record does not silently play. Log-storage writability and free space are startup interlock conditions, because silent non-recording is otherwise indistinguishable from health.
+25. Profiling privileges are never granted to a deployed configuration. Any timing figure obtained under profiling is an upper bound, not a production measurement.
 
 ## System context
 
@@ -265,6 +273,33 @@ Software-in-the-loop establishes logical correctness, sequence and freshness han
 
 Telemetry is two planes. The control loop writes a preallocated lock-free ring buffer inside the 5 ms cycle, drained to MCAP by a non-real-time thread at roughly 170 kB/s, which is approximately 204 MB for a full match and is therefore always on. `rosbag2` records the non-real-time plane only. Control-loop replay is bit-identical within one build and architecture; cross-architecture comparison is tolerance-based, because the simulator guarantees reproducibility only within a single version on the same architecture.
 
+## Observability and competition operations
+
+The rulebook, not the engineering budget, sets the observability envelope. Each robot is capped at 1 Mbit/s of total traffic, any transmission from an external computer to a playing robot is prohibited, and touching a robot places it in service and resets its penalty clock. The standard remote-debugging workflow is therefore unavailable during play, and the architecture is shaped around that rather than around it.
+
+```mermaid
+flowchart LR
+    subgraph Robot["Robot - local storage"]
+        RT["5 ms cycle<br/>lock-free ring buffer"] -->|"non-RT drain"| M1["MCAP: control plane<br/>~170 kB/s, always on"]
+        NRT["perception, estimation,<br/>behaviour, container health"] --> M2["rosbag2 MCAP<br/>snapshot for images<br/>continuous for events"]
+        GW["ADR-005 network gateway"]
+    end
+    RT -.->|"cycle sequence number"| GW
+    NRT -.->|"cycle sequence number"| GW
+    GW -->|"one-way UDP<br/>1 kB at 5 Hz"| OPS["Operator station<br/>tethered LAN, wireless off"]
+    M1 & M2 -->|"physical, off-network,<br/>between matches only"| LAB["Lab analysis"]
+```
+
+The control log is roughly 170 kB/s against a 125 kB/s cap, so streaming it is prohibited rather than merely costly, and extracting one match over the competition network would take about 27 minutes against a five-minute half-time. Both recorded planes therefore stay on the robot and are extracted physically, off-network, between matches.
+
+Correlation between planes is structural. The in-cycle record writes its monotonic cycle time to the MCAP `publish_time` field, the drain thread's time to `log_time`, and the control-cycle sequence number to `sequence`; every non-real-time producer that must be correlated carries the cycle sequence it derived from. ROS header stamps are `RCL_ROS_TIME`, which without an active time source is the settable system clock, and a three-hundred-millisecond step is sixty control cycles.
+
+The in-cycle record is a fixed-layout binary structure carried inside MCAP under its own schema, with release identity in `Metadata` and the calibration files actually in force embedded as `Attachment` records, so every log is self-contained and can never be analysed against the wrong build. A projection bitmask and per-joint deltas make the `SafetyKernel` auditable after the fact.
+
+In play, the only external channel is a one-way UDP health beacon emitted by the network gateway on a port separate from team communication, bounded to five per cent of the bandwidth cap, and carrying the robot's own measured transmit volume so a cap violation is visible rather than inferred. Because servicing resets the penalty clock and a safe-but-broken robot may not be picked up, the beacon and touchline-legible visual and audible indication are the complete in-play diagnostic surface.
+
+Calibration is four classes with four gates. Only joint zero offsets enter the startup interlock, because a zero-offset error shifts the entire `SafetyKernel` joint envelope; IMU bias, camera extrinsics, and turf friction degrade specific estimates and are gated by their consumers. Profiling with `perf`, Nsight Systems, or Arm PMU counters requires `CAP_PERFMON`, which the deployed configuration never holds, so profiling is a named non-default runtime configuration over an unchanged image. `ros2_tracing` instrumentation is compiled in by default, so tracing is a runtime session rather than a rebuild.
+
 ## Configuration and release identity
 
 The following artifacts are generated, immutable within a release, and identified by canonical digests:
@@ -276,8 +311,9 @@ The following artifacts are generated, immutable within a release, and identifie
 - Zenoh peer, router, QoS, and security configuration
 - ROS, RMW, firmware, container, and dependency versions
 - Simulator version and robot model digest
+- Competition versus laboratory network posture, including whether the operator link is enabled
 
-The host, STM32, controller, and router report their relevant identities. A required mismatch keeps motion disabled. Runtime parameters may select only prequalified values and modes; they cannot weaken hard safety limits or bypass compatibility checks.
+The host, STM32, controller, and router report their relevant identities. A required mismatch keeps motion disabled. Runtime parameters may select only prequalified values and modes; they cannot weaken hard safety limits or bypass compatibility checks. A rollback reverts the image digest, safety manifest, calibration digests, and configuration digests together, and both release digests are resident on the robot before a tournament begins.
 
 ## Failure boundaries
 
@@ -302,6 +338,10 @@ The host, STM32, controller, and router report their relevant identities. A requ
 | Container or host L4T digest mismatch                 | Startup interlock remains closed                                                                                       |
 | Simulator or emulator behaves unlike hardware         | Detected by running one transport conformance suite unchanged against every transport, real and simulated              |
 | Test instrumentation reaches production               | Prevented structurally: injection is a transport plugin, and binaries above the transport boundary are digest-compared |
+| Log storage full, unmounted, or read-only             | Startup interlock remains closed; free space is also reported in the health beacon                                     |
+| Telemetry planes disagree after a system clock step   | No effect: correlation is by control-cycle sequence number, not by wall-clock time                                     |
+| Robot misbehaves during play                          | Diagnosed from the health beacon and touchline indication only; contact would reset the penalty clock                  |
+| Bad release reaches the field                         | Roll back image, safety manifest, calibration, and configuration together, then re-run the pre-match checks            |
 
 ## Qualification path
 
@@ -326,6 +366,16 @@ All accepted boundaries are tested first with unit and property tests, then SIL,
 - Bit-identical control-loop replay within one build and architecture, with cross-architecture comparison reported separately and by tolerance
 - Digest equality between the production build and the fault-injection build for every component above the transport boundary
 - Full-match in-cycle logging on the target storage medium, with no cycle overrun attributable to the drain thread
+- Total per-robot transmitted volume over a full match, measured at the gateway, below the 1 Mbit/s rule cap with margin
+- A structural demonstration that no process transmits toward a playing robot in the competition configuration
+- A system-clock step during a recorded run, showing control-cycle correlation is unaffected
+- Repeated mid-match power cuts, showing at most one file-roll interval lost and the remainder readable and indexed
+- Every ADR-002 fault class diagnosed from the beacon and touchline indication alone, or documented as a known blind spot
+- A timed half-time rehearsal covering battery change, inspection, extraction, and pre-match checks, executed by someone who did not write the procedure
+- A synthetic memory load producing the predicted `tegrastats` EMC response before any bandwidth figure is quoted
+- Evidence that no deployed container holds `CAP_PERFMON` or `CAP_SYS_ADMIN`
+- A rollback drill completed and validated within the between-matches window
+- Broadcast reception re-verified on the venue network rather than inferred from the lab result
 
 Average latency alone is not acceptance evidence. Reports preserve distributions, worst observed values, sample counts, hardware and software manifests, load profile, and physical trace captures.
 
@@ -337,7 +387,6 @@ The following are intentionally not decided here:
 - Robot geometry, inertial, actuator, contact, and simulator model pipeline
 - State estimation and time synchronization
 - Perception and world modeling
-- Observability, field diagnostics, calibration workflows, and competition operations
 - Jetson module selection and the resulting core, memory, thermal, and power budgets
 - Successor actuator transport, physical bus, and topology
 - Detailed package boundaries, repositories, CI/CD, release trains, and team workflow

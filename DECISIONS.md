@@ -51,15 +51,28 @@ This register indexes accepted and superseded architecture decisions. Detailed r
 | [ADR-007-09](architecture/ADR-007-simulation-sil-hil.md)                           | Validation          | Enumerate fault campaigns from the ADR-002 product with a documented reduction; emergency stop is physical-test-only.                                      | Accepted | 2026-09-01 |
 | [ADR-007-10](architecture/ADR-007-simulation-sil-hil.md)                           | Telemetry           | Record the control loop at full rate in an in-cycle lock-free ring buffer drained to MCAP; `rosbag2` owns the non-real-time plane only.                    | Accepted | 2026-09-01 |
 | [ADR-007-11](architecture/ADR-007-simulation-sil-hil.md)                           | Telemetry           | Define three replay scopes; require bit-exactness only within one architecture and build, and pin the simulator version in the release manifest.           | Accepted | 2026-09-01 |
+| [ADR-008-01](architecture/ADR-008-observability-and-operations.md)                 | Telemetry           | Split telemetry into three planes; the two recorded planes never touch the network, and a one-way UDP beacon is the only external channel during play.     | Accepted | 2026-09-01 |
+| [ADR-008-02](architecture/ADR-008-observability-and-operations.md)                 | Telemetry           | Correlate every plane by control-cycle sequence number; timestamp-based correlation between planes is prohibited.                                          | Accepted | 2026-09-01 |
+| [ADR-008-03](architecture/ADR-008-observability-and-operations.md)                 | Telemetry           | Carry the fixed-layout in-cycle record inside MCAP with its own schema, release identity in `Metadata`, and active calibration as `Attachment` records.    | Accepted | 2026-09-01 |
+| [ADR-008-04](architecture/ADR-008-observability-and-operations.md)                 | Telemetry           | Record a projection bitmask and per-joint deltas so the `SafetyKernel` is auditable from the log.                                                          | Accepted | 2026-09-01 |
+| [ADR-008-05](architecture/ADR-008-observability-and-operations.md)                 | Operations          | Emit the health beacon from the ADR-005 gateway on a port separate from team communication, bounded to 5 % of the per-robot bandwidth cap.                 | Accepted | 2026-09-01 |
+| [ADR-008-06](architecture/ADR-008-observability-and-operations.md)                 | Networking          | Disable the ADR-003 operator link during play; monitoring is receive-only and the operator station is tethered with wireless hardware deactivated.         | Accepted | 2026-09-01 |
+| [ADR-008-07](architecture/ADR-008-observability-and-operations.md)                 | Operations          | Require the robot to be diagnosable without being touched; visual and audible status indication is a hardware requirement.                                 | Accepted | 2026-09-01 |
+| [ADR-008-08](architecture/ADR-008-observability-and-operations.md)                 | Operations          | Check log-storage writability and free space in the ADR-002 startup interlock and report them in the beacon.                                               | Accepted | 2026-09-01 |
+| [ADR-008-09](architecture/ADR-008-observability-and-operations.md)                 | Calibration         | Adopt four calibration classes with different gates; only joint zero offsets enter the startup interlock. All are digest-identified and embedded in logs.  | Accepted | 2026-09-01 |
+| [ADR-008-10](architecture/ADR-008-observability-and-operations.md)                 | Observability       | Make profiling a named non-default runtime configuration that grants `CAP_PERFMON` to one container without changing the image.                            | Accepted | 2026-09-01 |
+| [ADR-008-11](architecture/ADR-008-observability-and-operations.md)                 | Observability       | Make cycle duration, deadline overruns, and transport counters first-class in-cycle record fields; they are the only field-available instrument.           | Accepted | 2026-09-01 |
+| [ADR-008-12](architecture/ADR-008-observability-and-operations.md)                 | Observability       | Never record or report `EMC %` without its frequency, and validate the counter semantics empirically before use.                                           | Accepted | 2026-09-01 |
+| [ADR-008-13](architecture/ADR-008-observability-and-operations.md)                 | Release management  | Keep both release digests resident before a tournament; roll back image, safety manifest, calibration, and configuration together, then re-run the checks. | Accepted | 2026-09-01 |
 
 ## Reserved identifiers
 
-ADR numbers no longer track topic numbers, because ADR-003 records a cross-cutting middleware decision rather than Topic 3, ADR-005 records Topics 7 and 8 jointly, ADR-006 records Topic 9, and ADR-007 records Topic 10.
+ADR numbers no longer track topic numbers, because ADR-003 records a cross-cutting middleware decision rather than Topic 3, ADR-005 records Topics 7 and 8 jointly, ADR-006 records Topic 9, ADR-007 records Topic 10, and ADR-008 records Topic 11.
 
 | ID      | Reserved for                                     | State                                            |
 | ------- | ------------------------------------------------ | ------------------------------------------------ |
 | ADR-004 | Topic 3: robot model, kinematics, and locomotion | Reserved. Research complete; decision not taken. |
-| ADR-008 | Next topic to reach an accepted decision         | Unassigned                                       |
+| ADR-009 | Next topic to reach an accepted decision         | Unassigned                                       |
 
 ## Research baselines
 
@@ -75,4 +88,5 @@ Research precedes decisions. These documents are durable evidence baselines, not
 | 8 — GameController and team networking   | [topic-8-gamecontroller-networking.md](research/topic-8-gamecontroller-networking.md)             | Complete, decided in ADR-005       | 2026-09-01             |
 | 9 — Runtime, containers, compute         | [topic-9-runtime-and-containers.md](research/topic-9-runtime-and-containers.md)                   | Complete, decided in ADR-006       | 2026-09-01             |
 | 10 — Simulation, SIL, HIL                | [topic-10-simulation-sil-hil.md](research/topic-10-simulation-sil-hil.md)                         | Complete, decided in ADR-007       | 2026-09-01             |
-| 11 — Observability and operations        | [topic-11-observability-and-operations.md](research/topic-11-observability-and-operations.md)     | In progress                        | 2026-09-01             |
+| 11 — Observability and operations        | [topic-11-observability-and-operations.md](research/topic-11-observability-and-operations.md)     | Complete, decided in ADR-008       | 2026-09-01             |
+| 12 — Development workflow and CI/CD      | [topic-12-development-workflow-and-cicd.md](research/topic-12-development-workflow-and-cicd.md)   | In progress                        | 2026-09-01             |

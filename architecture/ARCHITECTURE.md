@@ -2,7 +2,7 @@
 
 - Status: Living document
 - Last updated: 2026-09-01
-- Covered decisions: real-time actuation, hardware abstraction, safety and fault management, Zenoh middleware, and behaviour, game state, and team networking
+- Covered decisions: real-time actuation, hardware abstraction, safety and fault management, Zenoh middleware, behaviour, game state, and team networking, and the containerized runtime
 
 ## Scope
 
@@ -12,8 +12,9 @@ This document is the current accepted system skeleton. It summarizes, but does n
 - [ADR-002: Safety and Fault Management](ADR-002-safety-and-fault-management.md)
 - [ADR-003: Zenoh Middleware](ADR-003-zenoh-middleware.md)
 - [ADR-005: Behaviour, Game State, and Team Networking](ADR-005-behavior-game-state-and-team-networking.md)
+- [ADR-006: Runtime, Container, and Compute Architecture](ADR-006-runtime-and-containers.md)
 
-Locomotion, estimation, perception, model generation, simulation, compute profiles, and team delivery workflow remain to be decided topic by topic. Diagrams show placeholders only where needed to explain an accepted boundary; placeholders are not component selections.
+Locomotion, estimation, perception, model generation, simulation, and team delivery workflow remain to be decided topic by topic. Diagrams show placeholders only where needed to explain an accepted boundary; placeholders are not component selections.
 
 ## Architectural invariants
 
@@ -30,6 +31,9 @@ Locomotion, estimation, perception, model generation, simulation, compute profil
 11. An action whose correctness depends on knowing the field direction cannot execute while that direction is ambiguous. This is enforced structurally, not per node.
 12. Team communication is an enhancement and never a dependency. Every robot plays with an empty teammate set.
 13. Competition network traffic is untrusted. Every reachable consequence of an injected or corrupted packet degrades toward less motion, never toward more actuator authority.
+14. All software runs in containers built on Ubuntu 24.04. No ROS installation exists on the host, because no Jazzy arm64 binaries exist for the JetPack 6 host operating system.
+15. Real-time privileges and limits are asserted at startup and read back. A failed assertion is a startup failure, never a silent downgrade to normal scheduling.
+16. Every image and base image is referenced by digest, and the running digest participates in the startup identity interlock.
 
 ## System context
 
@@ -203,6 +207,39 @@ Every action node declares whether its correctness depends on the field directio
 
 The network gateway binds its sockets at `configure`, drains each socket per wake keeping only the last valid packet, publishes state age as data, and applies an ordered validation ladder before anything downstream sees a competition byte. It runs in the host network namespace because a default bridge network does not receive host-subnet broadcasts, and that failure is silent.
 
+## Deployment and compute isolation
+
+ROS 2 Jazzy on arm64 is a targeted platform on Ubuntu 24.04 only; the JetPack 6 host is Ubuntu 22.04. Containers are therefore the only supported route to the accepted ROS distribution, and the container image is a release-identity artifact rather than a packaging convenience.
+
+```mermaid
+flowchart TB
+    subgraph Host["Jetson Orin host - JetPack 6.2 / L4T r36.4.x / Ubuntu 22.04"]
+        K["Kernel: isolcpus, nohz_full, rcu_nocbs, irqaffinity<br/>NVIDIA GPU driver, UEFI runtime services disabled"]
+        SD["systemd<br/>bounded restart backoff"]
+        subgraph NS["Host network namespace"]
+            RT["control<br/>CAP_SYS_NICE, rtprio, memlock<br/>pinned to isolated cores"]
+            ZR["zenoh-router<br/>rmw_zenohd"]
+            GW["net-gateway"]
+            PER["perception<br/>CUDA, TensorRT, ZED SDK"]
+            EST["estimation"]
+            BEH["behaviour"]
+        end
+    end
+    SD --> RT & ZR & GW & PER & EST & BEH
+    K -.->|"driver injected by<br/>NVIDIA Container Toolkit"| PER
+    RT <-->|"loopback TCP"| ZR
+    PER <--> ZR
+    EST <--> ZR
+    BEH <--> ZR
+    GW <--> ZR
+```
+
+Container boundaries follow failure domains and privilege requirements, not code structure. One long-running process per container makes container liveness equal process liveness. systemd on the host is the supervisor; `ros2 launch` composes nodes and never supervises, because it provides no bounded restart backoff or readiness-gated ordering. Startup ordering is a readiness problem, and the real interlock remains the identity match required before actuator power can be armed.
+
+All ROS containers share the host network namespace. This resolves the conflict between router-mediated loopback TCP and the gateway's broadcast requirement. The competition trust boundary is a process boundary enforced by binding discipline and the validation ladder, not by namespace isolation, so nothing is lost by sharing the namespace. The accepted cost is a shared port namespace that must be managed by convention.
+
+CPU isolation, IRQ affinity, core pinning, `mlockall`, and `SCHED_FIFO` are mandatory and independent of kernel choice. The vendor real-time kernel is labelled Developer-Preview on Orin with no published latency data; it is adopted only if measurement shows a benefit. Jetson unified memory means core pinning does not partition memory bandwidth or last-level cache, so perception load remains a live timing risk that pinning cannot remove.
+
 ## Configuration and release identity
 
 The following artifacts are generated, immutable within a release, and identified by canonical digests:
@@ -234,6 +271,9 @@ The host, STM32, controller, and router report their relevant identities. A requ
 | Team communication loss                               | Roles collapse deterministically to solo play; no role vacancy and no restart storm                           |
 | Field pose ambiguous                                  | Symmetry-sensitive actions are gated off; the robot advertises low confidence and declines those roles        |
 | Malformed, spoofed, or flooded competition packets    | Counted and dropped by rung; consequences bounded to less motion; flood contained by core isolation           |
+| Container crash or restart                            | systemd applies bounded restart backoff; failure is confined to that container; no automatic re-arm           |
+| Real-time privilege or limit not granted              | Startup failure with the offending value reported; the process never continues at normal scheduling priority  |
+| Container or host L4T digest mismatch                 | Startup interlock remains closed                                                                              |
 
 ## Qualification path
 
@@ -249,6 +289,10 @@ All accepted boundaries are tested first with unit and property tests, then SIL,
 - A structural demonstration that the pose mode set is collapsed only at the GameController return encoder
 - Fuzzing reports for both competition wire formats, with rejections counted per validation rung
 - Broadcast reception verified across the deployed container network configuration, never over loopback
+- Startup readback of scheduler policy, priority, `mlockall`, `RLIMIT_MEMLOCK`, `RLIMIT_RTPRIO`, and host real-time throttling
+- Cycle-timing comparison across generic and real-time kernels, with UEFI runtime services enabled and disabled
+- Per-container kill tests during simulated play, showing bounded backoff and no automatic re-arm
+- End-to-end digest pinning evidence and a native-versus-emulated build comparison
 
 Average latency alone is not acceptance evidence. Reports preserve distributions, worst observed values, sample counts, hardware and software manifests, load profile, and physical trace captures.
 
@@ -260,8 +304,8 @@ The following are intentionally not decided here:
 - Robot geometry, inertial, actuator, contact, and simulator model pipeline
 - State estimation and time synchronization
 - Perception and world modeling
-- Compute capability profiles and workload isolation beyond the accepted real-time boundary
-- Container topology, process supervision, kernel configuration, and GPU access
+- Simulation, software-in-the-loop, hardware-in-the-loop, and deterministic replay
+- Jetson module selection and the resulting core, memory, thermal, and power budgets
 - Successor actuator transport, physical bus, and topology
 - Detailed package boundaries, repositories, CI/CD, release trains, and team workflow
 

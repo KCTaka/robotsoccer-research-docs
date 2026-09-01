@@ -2,7 +2,7 @@
 
 - Status: Living document
 - Last updated: 2026-09-01
-- Covered decisions: real-time actuation, hardware abstraction, safety and fault management, Zenoh middleware, behaviour, game state, and team networking, the containerized runtime, simulation, validation, and replay, and observability and competition operations
+- Covered decisions: real-time actuation, hardware abstraction, safety and fault management, Zenoh middleware, behaviour, game state, and team networking, the containerized runtime, simulation, validation, and replay, observability and competition operations, and the development workflow, delivery pipeline, and release management
 
 ## Scope
 
@@ -15,10 +15,11 @@ This document is the current accepted system skeleton. It summarizes, but does n
 - [ADR-006: Runtime, Container, and Compute Architecture](ADR-006-runtime-and-containers.md)
 - [ADR-007: Simulation, Software-in-the-Loop, Hardware-in-the-Loop, and Deterministic Replay](ADR-007-simulation-sil-hil.md)
 - [ADR-008: Observability, Telemetry, and Competition Operations](ADR-008-observability-and-operations.md)
+- [ADR-009: Development Workflow, CI/CD, and Release Management](ADR-009-development-workflow-and-cicd.md)
 
-Requirements that these decisions place on the mechanical, electrical, and firmware domains are tracked in [HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md).
+Requirements that these decisions place on the mechanical, electrical, and firmware domains are tracked in [HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md). The consolidated cross-topic view, including the research baselines that have not produced an ADR, is [SYSTEM_ARCHITECTURE_MASTER.md](../SYSTEM_ARCHITECTURE_MASTER.md).
 
-Locomotion, estimation, perception, model generation, and team delivery workflow remain to be decided topic by topic. Diagrams show placeholders only where needed to explain an accepted boundary; placeholders are not component selections.
+Locomotion, estimation, perception, and model generation remain to be decided topic by topic. Diagrams show placeholders only where needed to explain an accepted boundary; placeholders are not component selections.
 
 ## Architectural invariants
 
@@ -47,6 +48,11 @@ Locomotion, estimation, perception, model generation, and team delivery workflow
 23. The robot must be diagnosable without being touched. Physical contact makes the robot in service and resets its penalty clock, so every diagnostic that requires contact is unavailable during play.
 24. A robot that cannot record does not silently play. Log-storage writability and free space are startup interlock conditions, because silent non-recording is otherwise indistinguishable from health.
 25. Profiling privileges are never granted to a deployed configuration. Any timing figure obtained under profiling is an upper bound, not a production measurement.
+26. Every external input is pinned by content identity: container images by digest, external sources by commit hash, GitHub Actions by full-length commit SHA, and build tools by explicit version. A moving reference in any of those positions defeats the release identity that four other ADRs depend on.
+27. The protocol definition, safety manifest, and robot model are generated artifacts. Continuous integration regenerates and diffs them, so hand-edited generated output is impossible rather than discouraged.
+28. A gate that cannot run is worse than no gate. Merge gates are restricted to checks that need no hardware; hardware-in-the-loop is enforced instead by signed evidence naming the exact release digest.
+29. A release is a manifest, not an artifact. Rollback moves every named identity together or not at all.
+30. No timing figure may originate in continuous integration or in simulation. Every quoted timing names the real hardware it was measured on.
 
 ## System context
 
@@ -300,9 +306,62 @@ In play, the only external channel is a one-way UDP health beacon emitted by the
 
 Calibration is four classes with four gates. Only joint zero offsets enter the startup interlock, because a zero-offset error shifts the entire `SafetyKernel` joint envelope; IMU bias, camera extrinsics, and turf friction degrade specific estimates and are gated by their consumers. Profiling with `perf`, Nsight Systems, or Arm PMU counters requires `CAP_PERFMON`, which the deployed configuration never holds, so profiling is a named non-default runtime configuration over an unchanged image. `ros2_tracing` instrumentation is compiled in by default, so tracing is a runtime session rather than a rebuild.
 
+## Delivery, continuous integration, and release management
+
+The project has no dedicated build or test hardware. That constraint is survivable because the repositories are public, and GitHub states that "Use of the standard GitHub-hosted runners is free and unlimited on public repositories", with a Linux arm64 row offering 4 CPU, 16 GB of memory, and 14 GB of storage under the label `ubuntu-24.04-arm`. That label is Ubuntu 24.04 Noble on arm64, which REP-2000 lists as Jazzy's only arm64 Tier 1 target and which ADR-006 already fixed as the container platform. The native arm64 build required by ADR-006-11 therefore needs no hardware and no budget. Cross-compilation is rejected outright: `ros-tooling/cross_compile` has been archived since 2022, and no maintained ROS 2 cross-compilation path exists.
+
+```mermaid
+flowchart TB
+    PR["Pull request"] --> G
+
+    subgraph G["Merge gates - hosted runners, no hardware"]
+        direction TB
+        G1["Regenerate and diff:<br/>protocol, safety manifest, model"]
+        G2["Build in project builder image<br/>ubuntu-24.04-arm and ubuntu-24.04"]
+        G3["Unit, property, lint"]
+        G4["Transport conformance<br/>and sign-flip detection"]
+        G5["MuJoCo SIL regression"]
+        G6["Replay determinism"]
+        G1 --> G2 --> G3 --> G4 --> G5 --> G6
+    end
+
+    subgraph BASE["Scheduled, never per-PR"]
+        V["Vendor base image<br/>CUDA, TensorRT, ZED SDK<br/>native arm64"]
+    end
+
+    V -. "by digest" .-> G2
+    G --> M["main"]
+    M --> RB["Release branch<br/>cut per tournament"]
+    RB --> RI["Images and firmware binary"]
+    V -. "by digest" .-> RI
+    RI --> RM["Release manifest<br/>every artifact by digest"]
+
+    HILC["HIL campaign<br/>borrowed hardware, manual"] --> EV["Signed evidence<br/>naming one digest"]
+
+    RM --> CHK{"Release gate"}
+    EV --> CHK
+    CHK -->|"evidence matches digest"| DEP["Deploy"]
+    CHK -->|"no match"| REJ["Rejected"]
+
+    DEP --> ENG["On-robot commissioning:<br/>TensorRT engine built,<br/>digest recorded"]
+    ENG --> INT["ADR-002 startup interlock"]
+```
+
+One repository holds the ROS 2 workspace, the STM32 firmware, the protocol and safety manifest definitions, the model pipeline, and the configuration. The argument is ADR-007-07, not team size: one machine-readable protocol definition drives the production transport, both hardware-in-the-loop emulators, and the firmware tests, so a polyrepo would make every protocol change an atomic four-repository commit that git cannot provide. `CODEOWNERS` protects the package boundaries that repository separation would otherwise protect, and `vcstool` is used only for external sources.
+
+Digest pinning is one invariant covering four supply chains rather than one rule with three gaps. `vcstool` documents that an import follows a branch tip, so a `.repos` file naming branches is not a pin and every release `.repos` file is produced with `vcs export --exact`. `colcon`, `rosdep`, and `vcstool` are absent from the Jazzy distribution manifest, so the build tools are pinned explicitly inside the builder image. GitHub states that a full-length commit SHA is "the only way to use an action as an immutable release", so every third-party action is SHA-pinned.
+
+Builds and tests run inside the project's own digest-pinned builder image. No ROS-specific GitHub Action is in the critical path: `action-ros-ci` and `setup-ros` document Jazzy but mention arm64 zero times, and introducing a third build environment would contradict the ADR-007-08 requirement that the tested binary is the shipped binary. Vendor layers are built into a separately versioned base image on a schedule and consumed by digest, because 14 GB of runner storage and a 6-hour job cap do not accommodate a monolithic CUDA, TensorRT, and ZED SDK build in the pull-request path.
+
+No hosted runner has a GPU, which splits the verification estate cleanly. MuJoCo software-in-the-loop is CPU-only and is therefore a merge gate at zero cost. TensorRT engines cannot be built in continuous integration at all: the engine is a device-local artifact produced in a deliberate, gated on-robot commissioning step, and its digest joins the release manifest and the ADR-002 startup interlock. Building it silently at first run is prohibited, because that produces an artifact outside every digest and every interlock. Isaac Lab remains a borrowed-workstation activity.
+
+Hardware-in-the-loop is a release gate enforced by evidence, not a merge gate. A campaign produces a signed record naming the release digest, the configuration, the fault campaign, the results, and the operator; continuous integration verifies that the record exists, is complete against every ADR-002 fault class, and names the exact digest being released. Because a rebuild produces a new digest, stale evidence invalidates itself.
+
+**No image containing the ZED SDK may be pushed to a public registry until redistribution rights are confirmed in writing.** The SDK is closed-source and freely downloadable; freely downloadable is not freely redistributable, and a public registry push is redistribution. Until the terms are obtained and recorded, the perception image is retained unpublished, pushed to a private registry, or built on the robot from a recipe. This is the Topic 5 licensing constraint applied in the opposite direction: open-sourcing the project increases licence exposure rather than removing it.
+
 ## Configuration and release identity
 
-The following artifacts are generated, immutable within a release, and identified by canonical digests:
+A release is one signed manifest, not a collection of artifacts. The following are generated, immutable within a release, and identified by canonical digests:
 
 - Robot and joint manifest
 - Motor identity, direction, gearing, limits, and calibration
@@ -311,6 +370,7 @@ The following artifacts are generated, immutable within a release, and identifie
 - Zenoh peer, router, QoS, and security configuration
 - ROS, RMW, firmware, container, and dependency versions
 - Simulator version and robot model digest
+- TensorRT engine identity, with its TensorRT, CUDA, L4T, and module versions
 - Competition versus laboratory network posture, including whether the operator link is enabled
 
 The host, STM32, controller, and router report their relevant identities. A required mismatch keeps motion disabled. Runtime parameters may select only prequalified values and modes; they cannot weaken hard safety limits or bypass compatibility checks. A rollback reverts the image digest, safety manifest, calibration digests, and configuration digests together, and both release digests are resident on the robot before a tournament begins.
@@ -342,6 +402,12 @@ The host, STM32, controller, and router report their relevant identities. A requ
 | Telemetry planes disagree after a system clock step   | No effect: correlation is by control-cycle sequence number, not by wall-clock time                                     |
 | Robot misbehaves during play                          | Diagnosed from the health beacon and touchline indication only; contact would reset the penalty clock                  |
 | Bad release reaches the field                         | Roll back image, safety manifest, calibration, and configuration together, then re-run the pre-match checks            |
+| Generated artifact hand-edited                        | Continuous integration regenerates and diffs it; the change cannot merge                                               |
+| Protocol change lands on one side of the boundary     | Structurally prevented: host and firmware are one repository and one generated definition, so the change is one commit |
+| Release built with no hardware-in-the-loop evidence   | Rejected at the release gate; a rebuild changes the digest, so stale evidence cannot be reused                         |
+| TensorRT engine does not match the release            | Startup interlock remains closed; the engine digest is a release-manifest identity                                     |
+| Fork pull request attempts to publish                 | No secrets, no registry write, no manifest write; publishing occurs only from protected refs                           |
+| A moving reference enters the supply chain            | Rejected by the pinning checks on image digests, `.repos` commit hashes, action SHAs, and build-tool versions          |
 
 ## Qualification path
 
@@ -376,6 +442,16 @@ All accepted boundaries are tested first with unit and property tests, then SIL,
 - Evidence that no deployed container holds `CAP_PERFMON` or `CAP_SYS_ADMIN`
 - A rollback drill completed and validated within the between-matches window
 - Broadcast reception re-verified on the venue network rather than inferred from the lab result
+- A native arm64 workspace build completed inside the 6-hour hosted-runner job limit, with usable disk headroom recorded
+- A perception image build completed without exhausting the 14 GB runner storage
+- Byte-level comparison between a continuous-integration binary and a local build from the same builder image digest
+- A hand-edited generated artifact rejected by the regenerate-and-diff gate
+- Deliberate joint sign inversions in the manifest, the simulator model, and the firmware, each detected in continuous integration
+- An audit showing every release `.repos` `version` is a commit hash, every action is SHA-pinned, and every image is digest-pinned
+- A fork pull request demonstrated to obtain no secret, no registry write, and no release-manifest write
+- A release attempt rejected for missing hardware-in-the-loop evidence, and another rejected for evidence naming a different digest
+- A robot whose TensorRT engine digest does not match the release manifest failing the startup interlock
+- Written confirmation of ZED SDK redistribution rights before any public registry push, or evidence that no such image was published
 
 Average latency alone is not acceptance evidence. Reports preserve distributions, worst observed values, sample counts, hardware and software manifests, load profile, and physical trace captures.
 
@@ -389,6 +465,5 @@ The following are intentionally not decided here:
 - Perception and world modeling
 - Jetson module selection and the resulting core, memory, thermal, and power budgets
 - Successor actuator transport, physical bus, and topology
-- Detailed package boundaries, repositories, CI/CD, release trains, and team workflow
 
 Each topic will update this document only after its decision is accepted.

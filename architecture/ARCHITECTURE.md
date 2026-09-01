@@ -2,7 +2,7 @@
 
 - Status: Living document
 - Last updated: 2026-09-01
-- Covered decisions: real-time actuation, hardware abstraction, safety and fault management, Zenoh middleware, behaviour, game state, and team networking, and the containerized runtime
+- Covered decisions: real-time actuation, hardware abstraction, safety and fault management, Zenoh middleware, behaviour, game state, and team networking, the containerized runtime, and simulation, validation, and replay
 
 ## Scope
 
@@ -13,8 +13,9 @@ This document is the current accepted system skeleton. It summarizes, but does n
 - [ADR-003: Zenoh Middleware](ADR-003-zenoh-middleware.md)
 - [ADR-005: Behaviour, Game State, and Team Networking](ADR-005-behavior-game-state-and-team-networking.md)
 - [ADR-006: Runtime, Container, and Compute Architecture](ADR-006-runtime-and-containers.md)
+- [ADR-007: Simulation, Software-in-the-Loop, Hardware-in-the-Loop, and Deterministic Replay](ADR-007-simulation-sil-hil.md)
 
-Locomotion, estimation, perception, model generation, simulation, and team delivery workflow remain to be decided topic by topic. Diagrams show placeholders only where needed to explain an accepted boundary; placeholders are not component selections.
+Locomotion, estimation, perception, model generation, observability, and team delivery workflow remain to be decided topic by topic. Diagrams show placeholders only where needed to explain an accepted boundary; placeholders are not component selections.
 
 ## Architectural invariants
 
@@ -34,6 +35,10 @@ Locomotion, estimation, perception, model generation, simulation, and team deliv
 14. All software runs in containers built on Ubuntu 24.04. No ROS installation exists on the host, because no Jazzy arm64 binaries exist for the JetPack 6 host operating system.
 15. Real-time privileges and limits are asserted at startup and read back. A failed assertion is a startup failure, never a silent downgrade to normal scheduling.
 16. Every image and base image is referenced by digest, and the running digest participates in the startup identity interlock.
+17. Simulators integrate at `ActuatorTransport` and never replace `hardware_interface::SystemInterface`. A test environment that substitutes the production system component is not evidence about the production system.
+18. Fault injection is a transport plugin selected by configuration. Every component above the transport boundary is digest-identical between a fault campaign and the release it qualifies.
+19. Software-in-the-loop establishes logical correctness only. No timing property may be claimed from it.
+20. The control loop is recorded at full rate in-cycle, independently of `rosbag2`, because the same rule that keeps the loop real-time safe keeps it off the ROS graph.
 
 ## System context
 
@@ -240,6 +245,26 @@ All ROS containers share the host network namespace. This resolves the conflict 
 
 CPU isolation, IRQ affinity, core pinning, `mlockall`, and `SCHED_FIFO` are mandatory and independent of kernel choice. The vendor real-time kernel is labelled Developer-Preview on Orin with no published latency data; it is adopted only if measurement shows a benefit. Jetson unified memory means core pinning does not partition memory bandwidth or last-level cache, so perception load remains a live timing risk that pinning cannot remove.
 
+## Validation environments
+
+Simulation, hardware-in-the-loop, fault injection, and replay all attach at the same place: the `ActuatorTransport` plugin boundary. Everything above it, including `HumanoidActuatorSystem` and the `SafetyKernel`, is identical in every environment. The `ros2_control` simulation plugins published for Jazzy are excluded because they replace the `SystemInterface`, which would remove the tuple snapshot, the safety kernel, freshness rejection, and the identity interlock from the tested configuration.
+
+```mermaid
+flowchart TB
+    CM["controller_manager"] --> HAS["HumanoidActuatorSystem + SafetyKernel"]
+    HAS --> AT{"ActuatorTransport"}
+    AT --> P["Stm32SerialTransport<br/>production, full HIL"]
+    AT --> M["MujocoActuatorTransport<br/>SIL, lockstep"]
+    AT --> R["ReplayTransport<br/>recorded feedback"]
+    AT --> F["FaultInjectingTransport<br/>decorator over any of the above"]
+```
+
+MuJoCo is the primary software-in-the-loop environment and regression oracle because it is CPU-only, runs on the robot and in GPU-less CI, and states its determinism properties. Isaac Lab is the parallel-learning environment only, because it requires a workstation-class discrete GPU. The simulator advances by an integer number of physics substeps per 5 ms cycle inside `exchange()`; `simulation_interfaces` is used for scenario control and never for per-cycle stepping.
+
+Software-in-the-loop establishes logical correctness, sequence and freshness handling, fault-response ordering, and regression against a stored trajectory. It establishes no timing property whatsoever. Three hardware-in-the-loop configurations carry the wall-clock evidence: Jetson-side against a physically separate STM32 emulator, firmware-side against scripted command streams, and full stack on a gantry. The emergency-stop chain is required to be independent of every software layer and is therefore tested physically or not at all.
+
+Telemetry is two planes. The control loop writes a preallocated lock-free ring buffer inside the 5 ms cycle, drained to MCAP by a non-real-time thread at roughly 170 kB/s, which is approximately 204 MB for a full match and is therefore always on. `rosbag2` records the non-real-time plane only. Control-loop replay is bit-identical within one build and architecture; cross-architecture comparison is tolerance-based, because the simulator guarantees reproducibility only within a single version on the same architecture.
+
 ## Configuration and release identity
 
 The following artifacts are generated, immutable within a release, and identified by canonical digests:
@@ -250,30 +275,33 @@ The following artifacts are generated, immutable within a release, and identifie
 - Host and firmware protocol capabilities
 - Zenoh peer, router, QoS, and security configuration
 - ROS, RMW, firmware, container, and dependency versions
+- Simulator version and robot model digest
 
 The host, STM32, controller, and router report their relevant identities. A required mismatch keeps motion disabled. Runtime parameters may select only prequalified values and modes; they cannot weaken hard safety limits or bypass compatibility checks.
 
 ## Failure boundaries
 
-| Failure                                               | Required containment                                                                                          |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Zenoh peer, router, or network loss                   | Remote intent expires; local control selects its defined safe behavior; embedded watchdog remains independent |
-| Real-time process or Jetson loss                      | STM32 detects command loss, applies qualified damping, then disables                                          |
-| Corrupt, stale, duplicate, or out-of-order field data | Reject batch and enter the fault response assigned by the safety manifest                                     |
-| Single drive fault                                    | Attempt and verify isolation; require an accepted qualified availability-mask policy to continue              |
-| Failed joint isolation                                | Remove shared actuator power                                                                                  |
-| STM32 reset or brownout                               | Boot with drives disabled and require a fresh arm epoch                                                       |
-| E-stop                                                | Independent monitored actuator-energy removal; reset does not start motion                                    |
-| Fall or impact                                        | Latch brace or fallback, then post-fall disable; require explicit recovery workflow                           |
-| Configuration or calibration mismatch                 | Startup interlock remains closed                                                                              |
-| GameController packet loss                            | Hold and age the last state; act on staleness only above 1.5 s, then fail to the rule-safe stationary default |
-| GameController never received                         | Distinct first-class condition; never defaulted to `INITIAL`                                                  |
-| Team communication loss                               | Roles collapse deterministically to solo play; no role vacancy and no restart storm                           |
-| Field pose ambiguous                                  | Symmetry-sensitive actions are gated off; the robot advertises low confidence and declines those roles        |
-| Malformed, spoofed, or flooded competition packets    | Counted and dropped by rung; consequences bounded to less motion; flood contained by core isolation           |
-| Container crash or restart                            | systemd applies bounded restart backoff; failure is confined to that container; no automatic re-arm           |
-| Real-time privilege or limit not granted              | Startup failure with the offending value reported; the process never continues at normal scheduling priority  |
-| Container or host L4T digest mismatch                 | Startup interlock remains closed                                                                              |
+| Failure                                               | Required containment                                                                                                   |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Zenoh peer, router, or network loss                   | Remote intent expires; local control selects its defined safe behavior; embedded watchdog remains independent          |
+| Real-time process or Jetson loss                      | STM32 detects command loss, applies qualified damping, then disables                                                   |
+| Corrupt, stale, duplicate, or out-of-order field data | Reject batch and enter the fault response assigned by the safety manifest                                              |
+| Single drive fault                                    | Attempt and verify isolation; require an accepted qualified availability-mask policy to continue                       |
+| Failed joint isolation                                | Remove shared actuator power                                                                                           |
+| STM32 reset or brownout                               | Boot with drives disabled and require a fresh arm epoch                                                                |
+| E-stop                                                | Independent monitored actuator-energy removal; reset does not start motion                                             |
+| Fall or impact                                        | Latch brace or fallback, then post-fall disable; require explicit recovery workflow                                    |
+| Configuration or calibration mismatch                 | Startup interlock remains closed                                                                                       |
+| GameController packet loss                            | Hold and age the last state; act on staleness only above 1.5 s, then fail to the rule-safe stationary default          |
+| GameController never received                         | Distinct first-class condition; never defaulted to `INITIAL`                                                           |
+| Team communication loss                               | Roles collapse deterministically to solo play; no role vacancy and no restart storm                                    |
+| Field pose ambiguous                                  | Symmetry-sensitive actions are gated off; the robot advertises low confidence and declines those roles                 |
+| Malformed, spoofed, or flooded competition packets    | Counted and dropped by rung; consequences bounded to less motion; flood contained by core isolation                    |
+| Container crash or restart                            | systemd applies bounded restart backoff; failure is confined to that container; no automatic re-arm                    |
+| Real-time privilege or limit not granted              | Startup failure with the offending value reported; the process never continues at normal scheduling priority           |
+| Container or host L4T digest mismatch                 | Startup interlock remains closed                                                                                       |
+| Simulator or emulator behaves unlike hardware         | Detected by running one transport conformance suite unchanged against every transport, real and simulated              |
+| Test instrumentation reaches production               | Prevented structurally: injection is a transport plugin, and binaries above the transport boundary are digest-compared |
 
 ## Qualification path
 
@@ -293,6 +321,11 @@ All accepted boundaries are tested first with unit and property tests, then SIL,
 - Cycle-timing comparison across generic and real-time kernels, with UEFI runtime services enabled and disabled
 - Per-container kill tests during simulated play, showing bounded backoff and no automatic re-arm
 - End-to-end digest pinning evidence and a native-versus-emulated build comparison
+- One transport conformance suite passing unchanged against the production transport, the simulator transport, the emulator, and the replay transport
+- A coupled-envelope case where a legal stiffness and a legal position command jointly exceed the allowed torque, proving the tuple is projected as one object
+- Bit-identical control-loop replay within one build and architecture, with cross-architecture comparison reported separately and by tolerance
+- Digest equality between the production build and the fault-injection build for every component above the transport boundary
+- Full-match in-cycle logging on the target storage medium, with no cycle overrun attributable to the drain thread
 
 Average latency alone is not acceptance evidence. Reports preserve distributions, worst observed values, sample counts, hardware and software manifests, load profile, and physical trace captures.
 
@@ -304,7 +337,7 @@ The following are intentionally not decided here:
 - Robot geometry, inertial, actuator, contact, and simulator model pipeline
 - State estimation and time synchronization
 - Perception and world modeling
-- Simulation, software-in-the-loop, hardware-in-the-loop, and deterministic replay
+- Observability, field diagnostics, calibration workflows, and competition operations
 - Jetson module selection and the resulting core, memory, thermal, and power budgets
 - Successor actuator transport, physical bus, and topology
 - Detailed package boundaries, repositories, CI/CD, release trains, and team workflow

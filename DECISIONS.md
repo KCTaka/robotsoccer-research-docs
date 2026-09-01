@@ -40,15 +40,26 @@ This register indexes accepted and superseded architecture decisions. Detailed r
 | [ADR-006-09](architecture/ADR-006-runtime-and-containers.md)                       | Runtime             | Grant minimum device privilege through stable udev rules; `--privileged` and whole-bus passthrough are prohibited.                                         | Accepted | 2026-09-01 |
 | [ADR-006-10](architecture/ADR-006-runtime-and-containers.md)                       | Release identity    | Reference every image and base image by digest; report the digest and host L4T version into the ADR-003 identity interlock.                                | Accepted | 2026-09-01 |
 | [ADR-006-11](architecture/ADR-006-runtime-and-containers.md)                       | CI and delivery     | Build CUDA, TensorRT, and ZED SDK layers natively on arm64; emulation is permitted only for cheap layers.                                                  | Accepted | 2026-09-01 |
+| [ADR-007-01](architecture/ADR-007-simulation-sil-hil.md)                           | Simulation          | Integrate every simulator at `ActuatorTransport`; `SystemInterface`-level simulation plugins are prohibited in any environment producing release evidence. | Accepted | 2026-09-01 |
+| [ADR-007-02](architecture/ADR-007-simulation-sil-hil.md)                           | Simulation          | Use MuJoCo as the primary SIL environment and regression oracle; Isaac Lab is the learning environment only; Gazebo is not adopted.                        | Accepted | 2026-09-01 |
+| [ADR-007-03](architecture/ADR-007-simulation-sil-hil.md)                           | Simulation          | Synchronise by lockstep inside `exchange()`, with the physics timestep dividing the 5 ms control period by an integer asserted at `configure`.             | Accepted | 2026-09-01 |
+| [ADR-007-04](architecture/ADR-007-simulation-sil-hil.md)                           | Simulation          | Use `simulation_interfaces` for scenario control only; `StepSimulation.srv` is rejected as the per-cycle stepping mechanism.                               | Accepted | 2026-09-01 |
+| [ADR-007-05](architecture/ADR-007-simulation-sil-hil.md)                           | Validation          | Run SIL on the production containers, and never quote SIL output as timing evidence.                                                                       | Accepted | 2026-09-01 |
+| [ADR-007-06](architecture/ADR-007-simulation-sil-hil.md)                           | Validation          | Adopt three HIL configurations; the Jetson-side emulator must be separate physical hardware presenting a real USB CDC endpoint.                            | Accepted | 2026-09-01 |
+| [ADR-007-07](architecture/ADR-007-simulation-sil-hil.md)                           | Validation          | Drive the production transport, both HIL emulators, and the firmware tests from one machine-readable protocol definition.                                  | Accepted | 2026-09-01 |
+| [ADR-007-08](architecture/ADR-007-simulation-sil-hil.md)                           | Validation          | Inject faults through a `FaultInjectingTransport` decorator selected by plugin configuration; test flags in production components are prohibited.          | Accepted | 2026-09-01 |
+| [ADR-007-09](architecture/ADR-007-simulation-sil-hil.md)                           | Validation          | Enumerate fault campaigns from the ADR-002 product with a documented reduction; emergency stop is physical-test-only.                                      | Accepted | 2026-09-01 |
+| [ADR-007-10](architecture/ADR-007-simulation-sil-hil.md)                           | Telemetry           | Record the control loop at full rate in an in-cycle lock-free ring buffer drained to MCAP; `rosbag2` owns the non-real-time plane only.                    | Accepted | 2026-09-01 |
+| [ADR-007-11](architecture/ADR-007-simulation-sil-hil.md)                           | Telemetry           | Define three replay scopes; require bit-exactness only within one architecture and build, and pin the simulator version in the release manifest.           | Accepted | 2026-09-01 |
 
 ## Reserved identifiers
 
-ADR numbers no longer track topic numbers, because ADR-003 records a cross-cutting middleware decision rather than Topic 3, ADR-005 records Topics 7 and 8 jointly, and ADR-006 records Topic 9.
+ADR numbers no longer track topic numbers, because ADR-003 records a cross-cutting middleware decision rather than Topic 3, ADR-005 records Topics 7 and 8 jointly, ADR-006 records Topic 9, and ADR-007 records Topic 10.
 
 | ID      | Reserved for                                     | State                                            |
 | ------- | ------------------------------------------------ | ------------------------------------------------ |
 | ADR-004 | Topic 3: robot model, kinematics, and locomotion | Reserved. Research complete; decision not taken. |
-| ADR-007 | Next topic to reach an accepted decision         | Unassigned                                       |
+| ADR-008 | Next topic to reach an accepted decision         | Unassigned                                       |
 
 ## Research baselines
 
@@ -63,4 +74,5 @@ Research precedes decisions. These documents are durable evidence baselines, not
 | 7 — Behaviour, game state, team strategy | [topic-7-behavior-and-strategy.md](research/topic-7-behavior-and-strategy.md)                     | Complete, decided in ADR-005       | 2026-09-01             |
 | 8 — GameController and team networking   | [topic-8-gamecontroller-networking.md](research/topic-8-gamecontroller-networking.md)             | Complete, decided in ADR-005       | 2026-09-01             |
 | 9 — Runtime, containers, compute         | [topic-9-runtime-and-containers.md](research/topic-9-runtime-and-containers.md)                   | Complete, decided in ADR-006       | 2026-09-01             |
-| 10 — Simulation, SIL, HIL                | [topic-10-simulation-sil-hil.md](research/topic-10-simulation-sil-hil.md)                         | In progress                        | 2026-09-01             |
+| 10 — Simulation, SIL, HIL                | [topic-10-simulation-sil-hil.md](research/topic-10-simulation-sil-hil.md)                         | Complete, decided in ADR-007       | 2026-09-01             |
+| 11 — Observability and operations        | [topic-11-observability-and-operations.md](research/topic-11-observability-and-operations.md)     | In progress                        | 2026-09-01             |

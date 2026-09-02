@@ -992,6 +992,13 @@ Two rules learned the hard way during this project:
 | [topic-11-observability-and-operations.md](research/topic-11-observability-and-operations.md)     | Observability and operations        | Decided in ADR-008                       |
 | [topic-12-development-workflow-and-cicd.md](research/topic-12-development-workflow-and-cicd.md)   | Development workflow and CI/CD      | Decided in ADR-009                       |
 
+### Engineering execution
+
+| Document                                                           | Scope                                                                                                          | Status               |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | -------------------- |
+| [model-gate-0-execution.md](engineering/model-gate-0-execution.md) | Gate ladder G1-G5, hardware deliverables, tolerance budget, model ingestion pipeline, RobStride CAN bench test | Draft for acceptance |
+| [repository-bootstrap.md](engineering/repository-bootstrap.md)     | Monorepo layout, `ActuatorTransport` and `HumanoidActuatorSystem` contracts, CMake, containers, initial CI     | Draft for acceptance |
+
 ### How to extend this architecture
 
 1. Research first. Produce `research/topic-N-<name>.md` with tagged evidence and an explicit `NR` list.

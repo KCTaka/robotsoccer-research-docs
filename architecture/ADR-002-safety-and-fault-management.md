@@ -4,6 +4,7 @@
 - Decision date: 2026-07-27
 - Amendments integrated: 2026-08-28
 - Scope: Topic 2
+- Research baseline: [topic-2-safety-and-fault-management.md](../research/topic-2-safety-and-fault-management.md) (retroactive, assembled 2026-09-02; contains the as-built safety gap register and records evidence that challenges parts of this decision without modifying it)
 
 ## Context
 
@@ -39,14 +40,14 @@ flowchart TB
     Power --> Drive
 ```
 
-| Authority | Runs when | Owns | Must not own |
-| --- | --- | --- | --- |
-| Whole-body controller (WBC) | Active host control | Balance, contact feasibility, dynamic limits, full-geometry self-collision, approved degraded policies, brace and recovery trajectories | Final hard-limit enforcement or emergency power |
-| `SafetyKernel` in `HumanoidActuatorSystem` | Every real-time `write()` | State and command freshness, finite values, hard joint envelope, coupled MIT torque/power envelope, slew limits, availability mask, state-dependent command projection | ROS calls, allocation, full online collision geometry, transport details |
-| Embedded Safety Agent | Independently on STM32 | Command sequence and age, packet integrity, local watchdogs, drive status, isolation attempts, safe damping, disable, power-cut request | Gait planning or assumptions about ROS lifecycle |
-| `SafetyCoordinator` | Non-real-time host process | System state machine, event aggregation, lifecycle transitions, operator interface, logs, rearm workflow, degraded-policy negotiation | First physical response or sole watchdog |
-| Drive protection | Inside each actuator | Hardware current, voltage, temperature, and internal fault protection | Whole-robot recovery decisions |
-| Physical stop chain | Independent electrical path | Latching emergency removal of actuator energy with monitored feedback | Network, Jetson, or application-software dependency |
+| Authority                                  | Runs when                   | Owns                                                                                                                                                                   | Must not own                                                             |
+| ------------------------------------------ | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Whole-body controller (WBC)                | Active host control         | Balance, contact feasibility, dynamic limits, full-geometry self-collision, approved degraded policies, brace and recovery trajectories                                | Final hard-limit enforcement or emergency power                          |
+| `SafetyKernel` in `HumanoidActuatorSystem` | Every real-time `write()`   | State and command freshness, finite values, hard joint envelope, coupled MIT torque/power envelope, slew limits, availability mask, state-dependent command projection | ROS calls, allocation, full online collision geometry, transport details |
+| Embedded Safety Agent                      | Independently on STM32      | Command sequence and age, packet integrity, local watchdogs, drive status, isolation attempts, safe damping, disable, power-cut request                                | Gait planning or assumptions about ROS lifecycle                         |
+| `SafetyCoordinator`                        | Non-real-time host process  | System state machine, event aggregation, lifecycle transitions, operator interface, logs, rearm workflow, degraded-policy negotiation                                  | First physical response or sole watchdog                                 |
+| Drive protection                           | Inside each actuator        | Hardware current, voltage, temperature, and internal fault protection                                                                                                  | Whole-robot recovery decisions                                           |
+| Physical stop chain                        | Independent electrical path | Latching emergency removal of actuator energy with monitored feedback                                                                                                  | Network, Jetson, or application-software dependency                      |
 
 The latching stop chain is de-energize-to-stop and independent of Jetson, ROS 2, Zenoh, USB, and STM32 application scheduling. Resetting the E-stop permits a later arm sequence but never starts motion. Diagnostic and embedded logic power should remain available where the electrical design permits, while actuator power is removed.
 
@@ -157,15 +158,15 @@ Impact or a settled orientation enters `POST_FALL`. Ordinary locomotion remains 
 
 These are maximum release requirements at the current 200 Hz rate. Hazard analysis may tighten them. Passing an average does not satisfy a maximum.
 
-| Event | Deadline | Start and observable end |
-| --- | ---: | --- |
-| Invalid host tuple detected by `SafetyKernel` | Same `write()` invocation; no later than the next 5 ms transmit slot | Validation tracepoint to safe batch handoff |
-| Critical drive fault in a complete feedback batch | 5 ms | Feedback acceptance to isolation command on physical link |
-| Missing or invalid host command stream | Assert by 15 ms; safe command by 20 ms from last valid cycle | Last accepted sequence to local safe-command transmission |
-| Joint isolation request | Verify within 15 ms; initiate power removal by 20 ms if unverified | Isolation transmission to acknowledgement and measured containment, or cut request |
-| Qualified fall trigger | First brace or fallback tuple within 10 ms | Trigger latch to physical command transmission |
-| Impact trigger | Enter post-fall command mode within 10 ms | Trigger latch to physical command transmission |
-| Hardwired E-stop | Initiate energy removal within 10 ms; monitored contact open within 30 ms | Input contact edge to coil command and auxiliary-contact feedback |
+| Event                                             |                                                                  Deadline | Start and observable end                                                           |
+| ------------------------------------------------- | ------------------------------------------------------------------------: | ---------------------------------------------------------------------------------- |
+| Invalid host tuple detected by `SafetyKernel`     |      Same `write()` invocation; no later than the next 5 ms transmit slot | Validation tracepoint to safe batch handoff                                        |
+| Critical drive fault in a complete feedback batch |                                                                      5 ms | Feedback acceptance to isolation command on physical link                          |
+| Missing or invalid host command stream            |              Assert by 15 ms; safe command by 20 ms from last valid cycle | Last accepted sequence to local safe-command transmission                          |
+| Joint isolation request                           |        Verify within 15 ms; initiate power removal by 20 ms if unverified | Isolation transmission to acknowledgement and measured containment, or cut request |
+| Qualified fall trigger                            |                                First brace or fallback tuple within 10 ms | Trigger latch to physical command transmission                                     |
+| Impact trigger                                    |                                 Enter post-fall command mode within 10 ms | Trigger latch to physical command transmission                                     |
+| Hardwired E-stop                                  | Initiate energy removal within 10 ms; monitored contact open within 30 ms | Input contact edge to coil command and auxiliary-contact feedback                  |
 
 The time for motor current and mechanical motion to decay is a separate measured hazard quantity. It must be recorded for each actuator, load, supply voltage, and stop primitive; it is not assumed equal to contactor opening time.
 
@@ -206,15 +207,15 @@ Calibration validity is a hard interlock, not merely a warning. Maintenance or g
 
 All rearming requires healthy conditions for a configured dwell, stationary or otherwise approved posture, a new arm epoch, and an explicit command. Additional requirements depend on the latch source:
 
-| Latch source | Additional rearm requirement |
-| --- | --- |
-| Brief communication loss | Operator or supervisory acknowledgement after link and sequence tests |
-| Drive protective fault | Fault cause cleared, isolation released through maintenance policy, and drive self-test passed |
-| Fall or impact | Posture classified, physical inspection policy satisfied, and recovery or stand mode explicitly selected |
-| Jetson or STM32 reset | Full startup interlocks and fresh controller handshake |
-| E-stop or actuator-power removal | Physical E-stop reset, contactor test, operator acknowledgement, then software arm |
-| Manifest or calibration mismatch | Correct released artifacts installed; no runtime override |
-| Repeated or unexplained critical fault | Maintenance lockout and fault investigation |
+| Latch source                           | Additional rearm requirement                                                                             |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Brief communication loss               | Operator or supervisory acknowledgement after link and sequence tests                                    |
+| Drive protective fault                 | Fault cause cleared, isolation released through maintenance policy, and drive self-test passed           |
+| Fall or impact                         | Posture classified, physical inspection policy satisfied, and recovery or stand mode explicitly selected |
+| Jetson or STM32 reset                  | Full startup interlocks and fresh controller handshake                                                   |
+| E-stop or actuator-power removal       | Physical E-stop reset, contactor test, operator acknowledgement, then software arm                       |
+| Manifest or calibration mismatch       | Correct released artifacts installed; no runtime override                                                |
+| Repeated or unexplained critical fault | Maintenance lockout and fault investigation                                                              |
 
 ## Safety manifest
 

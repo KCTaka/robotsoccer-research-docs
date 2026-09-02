@@ -4,6 +4,7 @@
 - Decision date: 2026-07-24
 - Last reviewed: 2026-08-28
 - Scope: Topic 1
+- Research baseline: [topic-1-real-time-actuation-and-hardware-abstraction.md](../research/topic-1-real-time-actuation-and-hardware-abstraction.md) (retroactive, assembled 2026-09-02; records evidence that challenges parts of this decision without modifying it)
 
 ## Context
 
@@ -67,13 +68,13 @@ This is a behavioral contract, not a frozen C++ signature. Implementations may u
 
 Every controlled joint exports exactly these five scalar command interfaces:
 
-| Interface | Unit | MIT meaning |
-| --- | --- | --- |
-| `position` | rad | Desired position $q_d$ |
-| `velocity` | rad/s | Desired velocity $\dot q_d$ |
-| `effort` | N*m | Feed-forward torque $\tau_{ff}$ |
-| `stiffness` | N*m/rad | Proportional gain $K_p$ |
-| `damping` | N*m*s/rad | Derivative gain $K_d$ |
+| Interface   | Unit      | MIT meaning                     |
+| ----------- | --------- | ------------------------------- |
+| `position`  | rad       | Desired position $q_d$          |
+| `velocity`  | rad/s     | Desired velocity $\dot q_d$     |
+| `effort`    | N\*m      | Feed-forward torque $\tau_{ff}$ |
+| `stiffness` | N\*m/rad  | Proportional gain $K_p$         |
+| `damping`   | N*m*s/rad | Derivative gain $K_d$           |
 
 The actuator law is:
 

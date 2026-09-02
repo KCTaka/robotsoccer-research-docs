@@ -1,6 +1,6 @@
 # Model Gate 0 Execution Plan
 
-- Status: **Draft for acceptance.** Not yet an accepted engineering baseline.
+- Status: **Accepted.** The G1-G5 ladder and the relative tolerance budget are the normative model qualification path.
 - Date: 2026-09-02
 - Scope: Closing Topic 3 Model Gate 0 — the measurement programme, the tolerance budget, the ingestion tooling, and the RobStride bus verification bench test.
 - Depends on: [ADR-001](../architecture/ADR-001-real-time-actuation-and-hardware-abstraction.md), [ADR-002](../architecture/ADR-002-safety-and-fault-management.md), [ADR-007](../architecture/ADR-007-simulation-sil-hil.md), [ADR-009](../architecture/ADR-009-development-workflow-and-cicd.md)
@@ -13,8 +13,16 @@
 
 **The gate ladder G1–G5 did not previously exist.** The Topic 3 baseline names only "Model Gate 0"
 and "Model Gate 3", and never enumerates the intermediate gates. Section 2 defines G1–G5 for the
-first time. That definition is a **proposal requiring acceptance**, not a restatement of an existing
-decision.
+first time. That definition was **accepted on 2026-09-02** and is now the normative model
+qualification path.
+
+**Three boundary answers are recorded and binding:**
+
+| Question                    | Answer                                                                                                                                                                                     | Where it lands                  |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------- |
+| Kinematic topology baseline | **Open serial chains.** If the hardware team introduces a parallel mechanism, the model compiler bypasses URDF for that sub-assembly and emits native MJCF/SDF directly                    | D-K08, section 5.5, section 5.7 |
+| CAD system                  | **Onshape primary, SolidWorks fallback.** Mass properties and inertia tensors are exported through a schema-validated intermediate file, **never** trusted from a CAD-native URDF exporter | D-M01, D-M03, section 5.6       |
+| Gate ladder                 | **Accepted**                                                                                                                                                                               | Section 2                       |
 
 **Absolute tolerances cannot be stated yet, and any document that states them is fabricating.**
 Almost every meaningful tolerance on this robot is a fraction of a quantity that Gate 0 itself
@@ -120,21 +128,20 @@ identity is not an input.
 | D-K05 | Positive-rotation direction, physically defined                              | Text + photograph                                | "Positive flexes the knee" is acceptable; "CCW" alone is not, because it is view-dependent   |
 | D-K06 | Motor-to-joint assignment: joint name, motor class, CAN node ID, bus segment | YAML table                                       | Feeds the HW-13 arithmetic in section 6                                                      |
 | D-K07 | Gear ratio and direction sign per joint                                      | Rational or decimal + sign                       | Sign is separate from magnitude and is verified independently in G1                          |
-| D-K08 | Any parallel, coupled, or passive mechanism                                  | YAML + description                               | If any exist, URDF cannot represent them natively and section 5.5 applies                    |
+| D-K08 | Any parallel, coupled, or passive mechanism                                  | YAML + description                               | **Baseline is open serial chains.** Any exception is declared here and routes to section 5.7 |
 | D-K09 | Zero-pose definition                                                         | Photograph + joint values                        | The pose in which all joint values read zero. Must be physically reproducible with a fixture |
 | D-K10 | Joint zero offset per joint, as installed                                    | radians                                          | Interlocked under ADR-008-09. Re-measured after any disassembly                              |
 
 ### 3.2 Mass properties (feeds G2)
 
-| ID    | Deliverable                                                      | Format                                                | Notes                                                                    |
-| ----- | ---------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------ |
-| D-M01 | Per-link mass                                                    | kg, 4 significant figures                             | From CAD **and** from a scale. Both values delivered, see section 4.2    |
-| D-M02 | Per-link CoM position in the link frame                          | metres, 3-vector                                      | Link frame must be the same frame used in D-K03                          |
-| D-M03 | Per-link inertia tensor about the CoM, in the link frame         | kg·m², full symmetric 3x3 (`ixx iyy izz ixy ixz iyz`) | **About the CoM**, not the link origin. The most common CAD export error |
-| D-M04 | Total assembled robot mass                                       | kg, measured                                          | Reconciled against $\sum$ D-M01 in G2                                    |
-| D-M05 | Whole-robot CoM in the zero pose                                 | metres, measured                                      | From a two-scale or knife-edge measurement                               |
-| D-M06 | Battery mass, CoM, and mounting frame                            | kg + metres                                           | Separated because it changes between matches                             |
-| D-M07 | Declared CAD material densities and any lumped/simplified bodies | Table                                                 | A "simplified" body with wrong density is invisible in the tensor        |
+| ID    | Deliverable                                                      | Format                                                | Notes                                                                                    |
+| ----- | ---------------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------- | --- | ----- | --------------------------------------- | ---------------- | ----------------------------------------------- |
+| D-M01 | Per-link mass                                                    | kg, 4 significant figures                             | From CAD **and** from a scale. Both values delivered, see section 4.2                    |     | D-M02 | Per-link CoM position in the link frame | metres, 3-vector | Link frame must be the same frame used in D-K03 |
+| D-M03 | Per-link inertia tensor, with its reference point **declared**   | kg·m², full symmetric 3x3 (`ixx iyy izz ixy ixz iyz`) | The schema requires an explicit `reference_point` of `com` or `link_origin`. Section 5.6 |
+| D-M04 | Total assembled robot mass                                       | kg, measured                                          | Reconciled against $\sum$ D-M01 in G2                                                    |
+| D-M05 | Whole-robot CoM in the zero pose                                 | metres, measured                                      | From a two-scale or knife-edge measurement                                               |
+| D-M06 | Battery mass, CoM, and mounting frame                            | kg + metres                                           | Separated because it changes between matches                                             |
+| D-M07 | Declared CAD material densities and any lumped/simplified bodies | Table                                                 | A "simplified" body with wrong density is invisible in the tensor                        |
 
 ### 3.3 Joint limits and transmission (feeds G1, G3)
 
@@ -359,10 +366,13 @@ model/
 │   └── measurements/
 │       └── weighbridge.csv
 ├── schema/
-│   ├── robot_model.schema.json    # JSON Schema, Draft 2020-12
+│   ├── robot_model.schema.json    # JSON Schema, Draft 2020-12. DELIVERED
 │   └── source/*.schema.json
 ├── generators/                    # Python package: humanoid_model_tools
 │   ├── ingest/
+│   │   ├── onshape.py             # primary: mass properties via schema-validated export
+│   │   ├── solidworks.py          # fallback: same intermediate format
+│   │   └── parallel_axis.py       # applies the shift when reference_point == link_origin
 │   ├── validate/
 │   ├── emit/
 │   │   ├── urdf.py  mjcf.py  usd.py  ros2_control.py
@@ -409,11 +419,72 @@ CI gate (merge-blocking, per ADR-009-07):
 | `NR` value                     | Permitted, but must be spelled `NR` and the generator records which gates it blocks                                              |
 | MJCF emission                  | Emits `balanceinertia="false"`, `boundmass="0"`, `boundinertia="0"`, `settotalmass="-1"` explicitly, and refuses any other value |
 | MJCF emission                  | Emits `strippath`, `angle`, `fusestatic`, `discardvisual` explicitly rather than relying on defaults                             |
-| Closed kinematic loops (D-K08) | If present, URDF emission **fails loudly** rather than silently emitting a tree. MJCF emits an equality constraint               |
+| Closed kinematic loops (D-K08) | Baseline is none. If declared, the loop sub-assembly is **excluded from URDF** and emitted natively in MJCF/SDF. See section 5.7 |
 | USD emission                   | Isaac Lab is learning-only per ADR-007-02. USD generation is `NR` for scheduling and is **not** on the Gate 0 critical path      |
 | Firmware joint table           | Emits a C header with a compile-time static assert on joint count, so a mismatch fails the firmware build rather than the robot  |
 
-### 5.6 Ingestion reconciliation
+### 5.6 CAD export contract
+
+**Onshape is the primary CAD system; SolidWorks is the fallback. Neither CAD system's native URDF
+exporter is trusted, and no CAD-generated URDF enters the repository.**
+
+The reason is narrow and specific. A CAD exporter must decide two conventions that it does not
+always state: whether the inertia tensor is reported about the **centre of mass** or about the
+**link origin**, and which frame it is resolved in. Those two choices differ by the parallel-axis
+term $m(\lVert r \rVert^2 I_3 - r r^\top)$, which for a 300 mm link offset by 150 mm is the same
+order as the tensor itself. Read the wrong one and the robot is wrong by 100 % on a quantity nobody
+inspects. The error is silent, survives every downstream tool, and surfaces as "the gait is
+inexplicably unstable".
+
+The contract removes the guess:
+
+| Rule                                                                                                                   | Enforcement                                                  |
+| ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| CAD exports a **schema-validated intermediate file** (`mass_properties.csv` + `provenance.yaml`), never URDF           | `model/schema/mass_properties.schema.json`                   |
+| Every inertia record declares `reference_point`, one of `com` or `link_origin`                                         | Schema `required`, no default, `enum` of exactly two values  |
+| Every inertia record declares `reference_frame`                                                                        | Schema `required`                                            |
+| The ingest tool applies the parallel-axis shift when `reference_point == link_origin`, and records that it did         | Ingest log, embedded in the G2 report                        |
+| Every record carries provenance: `cad_system`, `document_id`, `version_or_configuration`, `exported_at`, `exported_by` | Schema `required`                                            |
+| A CAD-native URDF file anywhere under `model/`                                                                         | **CI failure.** `tools/verify_generated.sh` rejects the path |
+
+Because `reference_point` has no default and only two permitted values, the exporter cannot omit
+the decision and the ingester cannot assume it. That is the entire point.
+
+### 5.7 Parallel and closed-loop mechanisms
+
+**Baseline: open serial chains.** The generator assumes a tree and emits URDF, MJCF, and SDF from
+the same source.
+
+If the hardware team introduces a parallel mechanism — a parallel ankle being the likely case — the
+policy is **not** to fail the build and **not** to approximate the loop as a serial chain. It is to
+route that sub-assembly around URDF:
+
+```mermaid
+flowchart TB
+    RM["robot_model.yaml"]
+    Q{"closed_loops declared?"}
+    RM --> Q
+    Q -->|"no - baseline"| ALL["Emit URDF + MJCF + SDF<br/>from the full tree"]
+    Q -->|"yes"| SPLIT["Partition: serial remainder<br/>vs loop sub-assemblies"]
+    SPLIT --> U["URDF: serial remainder only,<br/>loop links explicitly excluded<br/>and listed in a manifest"]
+    SPLIT --> M["MJCF/SDF: full model,<br/>native equality constraints"]
+    U --> WARN["URDF consumers are told,<br/>in the file, what is missing"]
+
+    style M fill:#2d5016,color:#ffffff
+```
+
+| Rule                                                                           | Reason                                                                                  |
+| ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| A declared loop sets `emission.urdf.mode = partial_with_exclusions`            | Schema `if`/`then`. The two cannot disagree                                             |
+| The URDF carries a comment block naming every excluded link and the reason     | A silently incomplete URDF is worse than a missing one                                  |
+| MJCF emits the loop as a native equality constraint; SDF emits it natively     | Both formats represent loops; URDF does not                                             |
+| The excluded sub-assembly may not contain a joint that `ros2_control` commands | If it does, the exclusion has broken the command path and must fail                     |
+| G5 correlation is run **per sub-assembly** where loops exist                   | A loop approximated as serial passes whole-robot correlation and is still wrong locally |
+
+The last rule is the one that matters. A parallel ankle contributes a small fraction of whole-robot
+mass, so a whole-robot correlation metric will not detect that its kinematics are wrong.
+
+### 5.8 Ingestion reconciliation
 
 The ingest stage does the one thing a human reliably gets wrong: cross-checking two independent
 measurements of the same quantity.
@@ -425,6 +496,39 @@ measurements of the same quantity.
 | Computed vs measured whole-robot CoM | D-M01/02, D-M05 | Block G2. This is the single most informative check in the pipeline                              |
 | Inertia frame convention             | D-M03           | Verify tensors are about the CoM by recomputing the parallel-axis shift and testing plausibility |
 | Joint axis vs origin consistency     | D-K03, D-K04    | Detect an axis expressed in the wrong frame                                                      |
+
+### 5.9 What the schema cannot enforce
+
+`model/schema/robot_model.schema.json` is delivered and behaviour-tested. It rejects the failure
+modes that are expressible as structure: an omitted `reference_point`, an invented enum value, a
+`principal` frame with no principal axes, a CAD export with no version, `balanceinertia="true"`, a
+rescaled `settotalmass`, a declared loop with a full-tree URDF, and any unknown key.
+
+It cannot express a relation between two values. JSON Schema has no arithmetic and no graph
+traversal. The following are therefore **validator-code checks**, run in `generators/validate/`,
+and they carry check IDs that the schema's `description` fields refer to:
+
+| ID   | Check                                                                                 | Why the schema cannot do it                                                                            |
+| ---- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| K-01 | Exactly one link has `parent_joint: null`, and the graph is a connected tree          | Graph traversal                                                                                        |
+| K-02 | Every joint `axis` normalises to 1 within $10^{-9}$                                   | Arithmetic across array elements                                                                       |
+| K-03 | Every `parent_link` and `child_link` names a declared link                            | Cross-document reference                                                                               |
+| K-04 | No cycle exists outside a declared `closed_loops` entry                               | Graph traversal                                                                                        |
+| M-01 | Inertia satisfies the triangle inequality $A+B \geq C$ for all permutations           | Arithmetic. MuJoCo also enforces this at compile time, which is why `balanceinertia` must stay `false` |
+| M-02 | The tensor is positive semi-definite                                                  | Eigenvalue computation                                                                                 |
+| M-03 | $\sum$ link masses reconciles with `total_mass_measured_kg`                           | Aggregation                                                                                            |
+| M-04 | `principal_axes_rpy_rad` is present when `reference_frame == principal`               | Expressible, and **is** enforced by the schema; listed here for cross-reference                        |
+| J-01 | `software_lower_rad` $\geq$ `hard_stop_lower_rad`, and likewise for upper             | Cross-field inequality                                                                                 |
+| J-02 | `effort_continuous_nm` $\leq$ `effort_peak_nm`                                        | Cross-field inequality                                                                                 |
+| A-01 | `actuator` is null if and only if the joint type is `fixed`                           | Conditional cross-field                                                                                |
+| A-02 | `can_node_id` is unique within a `bus_segment`                                        | Uniqueness across an array                                                                             |
+| A-03 | Per-segment bus utilisation from the section 6.2 formula is below the HW-13 threshold | Arithmetic across arrays                                                                               |
+| C-01 | The sole polygon is convex and its normal points outward                              | Geometry                                                                                               |
+
+M-01 deserves emphasis. The triangle inequality is the one free correctness check on an inertia
+tensor, and MuJoCo performs it by default. Setting `balanceinertia="true"` does not make a model
+pass that check; it deletes the check and replaces three measured numbers with their average. That
+is why the schema pins it to `false` with `const` rather than leaving it to review.
 
 ---
 
@@ -543,9 +647,8 @@ because its result may change the electrical architecture.
 
 | Item                                           | Owner        | Consequence of leaving open                                                     |
 | ---------------------------------------------- | ------------ | ------------------------------------------------------------------------------- |
-| CAD system and its inertia export format       | Hardware     | Determines the D-M03 ingestion adapter. Does not block the schema               |
-| Whether closed kinematic loops exist (D-K08)   | Hardware     | If yes, URDF emission fails and the estimator and WBC both change               |
 | RobStride CAN FD capability                    | Vendor, `NR` | Bounds the HW-13 remedy set                                                     |
 | Whether a calibration fixture for D-K09 exists | Hardware     | Without it, joint zeroing is not reproducible, and ADR-008-09 interlocks it     |
 | Absolute machining tolerances (section 4.3)    | Hardware     | The `[Project target]` values must be confirmed against real process capability |
+| Onshape mass-properties export mechanism       | Software     | FeatureScript, REST API, or manual export. Affects effort, not the schema       |
 | Isaac Lab USD scheduling                       | Software     | Not on the Gate 0 critical path                                                 |

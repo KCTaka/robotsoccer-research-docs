@@ -1,6 +1,6 @@
 # Repository Bootstrap and Scaffolding
 
-- Status: **Draft for acceptance.** Not yet an accepted engineering baseline.
+- Status: **Accepted.** Steps B1–B3 of section 7 are executed; the QL1 package set exists in `src/`.
 - Date: 2026-09-02
 - Scope: Monorepo layout, C++20 interface contracts, build system, container skeleton, and the initial CI workflow.
 - Depends on: [ADR-001](../architecture/ADR-001-real-time-actuation-and-hardware-abstraction.md), [ADR-002](../architecture/ADR-002-safety-and-fault-management.md), [ADR-006](../architecture/ADR-006-runtime-and-containers.md), [ADR-007](../architecture/ADR-007-simulation-sil-hil.md), [ADR-009](../architecture/ADR-009-development-workflow-and-cicd.md)
@@ -93,10 +93,10 @@ humanoid-soccer/
 │   │   ├── CMakeLists.txt
 │   │   └── package.xml
 │   │
-│   ├── humanoid_actuation/             # QL1 - HumanoidActuatorSystem
-│   │   ├── include/humanoid_actuation/humanoid_actuator_system.hpp
+│   ├── humanoid_actuator_system/           # QL1 - HumanoidActuatorSystem
+│   │   ├── include/humanoid_actuator_system/humanoid_actuator_system.hpp
 │   │   ├── src/
-│   │   ├── humanoid_actuation_plugin.xml
+│   │   ├── humanoid_actuator_system_plugin.xml
 │   │   └── ...
 │   │
 │   ├── humanoid_safety/                # QL1 - SafetyKernel
@@ -153,8 +153,8 @@ humanoid-soccer/
 | Rule                                                                                                                  | Reason                                                                                                |
 | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `humanoid_transport` depends on **nothing** but the C++ standard library and `humanoid_interfaces` types it needs     | ADR-001: the transport contract must not leak bus or ROS concepts. A dependency is how leakage starts |
-| No transport implementation package is a build dependency of `humanoid_actuation`                                     | They are `pluginlib` plugins, loaded by configuration. A build dependency would defeat ADR-007-01     |
-| `humanoid_safety` is depended on by `humanoid_actuation` only                                                         | `SafetyKernel` is invoked from one place                                                              |
+| No transport implementation package is a build dependency of `humanoid_actuator_system`                               | They are `pluginlib` plugins, loaded by configuration. A build dependency would defeat ADR-007-01     |
+| `humanoid_safety` is depended on by `humanoid_actuator_system` only                                                   | `SafetyKernel` is invoked from one place                                                              |
 | Anything under `model/generated/` and `firmware/shared/generated/` is `linguist-generated` and `CODEOWNERS`-protected | ADR-009-07                                                                                            |
 | QL1 packages require `CODEOWNERS` review and carry REP-2004 Level 1 obligations                                       | ADR-009-08                                                                                            |
 
@@ -162,7 +162,7 @@ humanoid-soccer/
 
 | Level   | Packages                                                                                                                    | Obligations                                                                                                                                                                                                                                      |
 | ------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **QL1** | `humanoid_transport`, `humanoid_actuation`, `humanoid_safety`                                                               | Version policy, stable version, strictly declared public API, API/ABI stability policy, system tests covering all documented features, tests covering all public API, code coverage tracking **and an enforced coverage policy for new changes** |
+| **QL1** | `humanoid_transport`, `humanoid_actuator_system`, `humanoid_safety`                                                         | Version policy, stable version, strictly declared public API, API/ABI stability policy, system tests covering all documented features, tests covering all public API, code coverage tracking **and an enforced coverage policy for new changes** |
 | **QL2** | `humanoid_transport_stm32`, `humanoid_transport_fault`, `humanoid_interfaces`, `humanoid_telemetry`, `humanoid_net_gateway` | Public API documented, unit + integration tests, coverage tracked                                                                                                                                                                                |
 | **QL3** | Everything else                                                                                                             | Unit tests, lint                                                                                                                                                                                                                                 |
 
@@ -367,7 +367,7 @@ is what it tests — every implementation runs the same suite.
 
 Written against the verified 4.47.0 API. No deprecated method is overridden.
 
-`src/humanoid_actuation/include/humanoid_actuation/humanoid_actuator_system.hpp`:
+`src/humanoid_actuator_system/include/humanoid_actuator_system/humanoid_actuator_system.hpp`:
 
 ```cpp
 #pragma once
@@ -385,7 +385,7 @@ Written against the verified 4.47.0 API. No deprecated method is overridden.
 #include "humanoid_safety/safety_kernel.hpp"
 #include "humanoid_transport/actuator_transport.hpp"
 
-namespace humanoid::actuation
+namespace humanoid::actuator_system
 {
 
 /// The only production hardware_interface::SystemInterface (ADR-001).
@@ -478,7 +478,7 @@ private:
   bool mit_tuple_claimed_{false};
 };
 
-}  // namespace humanoid::actuation
+}  // namespace humanoid::actuator_system
 ```
 
 ### `write()` ordering, fixed by ADR-001 and ADR-002
@@ -497,27 +497,52 @@ live command interfaces. Any other order allows a controller write to land mid-v
 
 ## 4. Build system
 
+### Verified linkage facts
+
+Read from `hardware_interface/CMakeLists.txt` at tag `4.47.0`:
+
+- It ends with `ament_export_targets(export_hardware_interface HAS_LIBRARY_TARGET)`, so consumers
+  link the namespaced target **`hardware_interface::hardware_interface`**.
+- It links its own dependencies as `rclcpp::rclcpp`, `rclcpp_lifecycle::rclcpp_lifecycle`, and
+  `pluginlib::pluginlib`. Modern namespaced targets are what upstream itself uses on Jazzy;
+  `ament_target_dependencies` is not needed and is deprecated in later distributions.
+- It installs headers to `include/hardware_interface`, i.e. the per-package include convention.
+  Our `$<INSTALL_INTERFACE:...>` must match that shape or downstream includes break after install.
+- `target_compile_features(hardware_interface PUBLIC cxx_std_17)`. Our C++20 requirement is
+  compatible; it raises the floor rather than conflicting.
+
+Read from `pluginlib/include/pluginlib/class_loader.hpp` on branch `jazzy`:
+
+- `template<class T> using UniquePtr = class_loader::ClassLoader::UniquePtr<T>;`
+- `UniquePtr<T> createUniqueInstance(const std::string & lookup_name);`
+
+The returned pointer's deleter is owned by the loader. That is why the loader member must be
+**declared before** the instance member: members are destroyed in reverse declaration order, so the
+loader is destroyed last.
+
 ### CMake baseline for a QL1 package
 
 ```cmake
 cmake_minimum_required(VERSION 3.22)   # Ubuntu 24.04 Noble ships 3.28
 project(humanoid_transport VERSION 0.1.0 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 20)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+  set(CMAKE_CXX_EXTENSIONS OFF)
+endif()
 
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+if(CMAKE_CXX_COMPILER_ID MATCHES "(GNU|Clang)")
   add_compile_options(-Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
 endif()
 
 find_package(ament_cmake REQUIRED)
 
 add_library(${PROJECT_NAME} INTERFACE)
-target_include_directories(${PROJECT_NAME} INTERFACE
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>)
 target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_20)
+target_include_directories(${PROJECT_NAME} INTERFACE
+  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+  "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>")
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -527,8 +552,12 @@ if(BUILD_TESTING)
   add_link_options(--coverage)
 endif()
 
-install(DIRECTORY include/ DESTINATION include)
-ament_export_targets(${PROJECT_NAME} HAS_LIBRARY_TARGET)
+install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
+install(TARGETS ${PROJECT_NAME} EXPORT export_${PROJECT_NAME})
+
+# No HAS_LIBRARY_TARGET here: an INTERFACE library produces no library file, and claiming
+# otherwise makes downstream link lines reference a path that does not exist.
+ament_export_targets(export_${PROJECT_NAME})
 ament_package()
 ```
 
@@ -798,7 +827,7 @@ is not generous, and it has not been measured for this project's image.
 | B4   | `protocol/actuator_protocol.yaml` + generators + drift gate                          | B3                    |
 | B5   | `humanoid_transport` headers, contract tests C1–C7 against a stub                    | B3, B4                |
 | B6   | `humanoid_safety` skeleton with the envelope **as a function of Gate 0 values**      | B5                    |
-| B7   | `humanoid_actuation` skeleton + `pluginlib` loading                                  | B5, B6                |
+| B7   | `humanoid_actuator_system` skeleton + `pluginlib` loading                            | B5, B6                |
 | B8   | `model/` schema + generators + drift gate                                            | B3                    |
 | B9   | `humanoid_transport_mujoco` + SIL regression job                                     | B7, B8, **Gate 0 G2** |
 | B10  | `humanoid_transport_stm32` + firmware skeleton                                       | B4, **G1 + G3**       |

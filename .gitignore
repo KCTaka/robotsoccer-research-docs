@@ -1,25 +1,2 @@
-# colcon
-build/
-install/
-log/
-
-# Python tooling under model/generators
-__pycache__/
-*.py[cod]
-.venv/
-.mypy_cache/
-.ruff_cache/
-.pytest_cache/
-
-# Generated model artifacts are COMMITTED on purpose (ADR-009-07 regenerates and diffs them).
-# Nothing under model/generated/ belongs here.
-
-# Local evidence and captures, which are large and reproducible
-evidence/**/*.mcap
-*.mcap
-*.bag
-
-# Editor
-.vscode/
-.idea/
-*.swp
+# Architecture documentation
+architecture/ARCHITECTURE_POC.md

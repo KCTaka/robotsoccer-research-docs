@@ -1,0 +1,11 @@
+# QL1 code and generated model/protocol artifacts require the repository owner.
+
+- @KCTaka
+  /model/generated/ @KCTaka
+  /protocol/ @KCTaka
+  /firmware/shared/generated/ @KCTaka
+  /src/humanoid_transport/ @KCTaka
+  /src/humanoid_safety/ @KCTaka
+  /src/humanoid_actuator_system/ @KCTaka
+  /tools/ @KCTaka
+  /.github/ @KCTaka

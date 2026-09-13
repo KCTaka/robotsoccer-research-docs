@@ -994,11 +994,11 @@ Two rules learned the hard way during this project:
 
 ### Engineering execution
 
-| Document                                                           | Scope                                                                                                          | Status               |
-| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | -------------------- |
-| [model-gate-0-execution.md](engineering/model-gate-0-execution.md) | Gate ladder G1-G5, hardware deliverables, tolerance budget, model ingestion pipeline, RobStride CAN bench test | Accepted 2026-09-02  |
-| [repository-bootstrap.md](engineering/repository-bootstrap.md)     | Monorepo layout, `ActuatorTransport` and `HumanoidActuatorSystem` contracts, CMake, containers, initial CI     | Accepted 2026-09-02  |
-| [robot_model.schema.json](model/schema/robot_model.schema.json)    | Executable contract for the model source of truth. Draft 2020-12, behaviour-tested                             | Delivered 2026-09-02 |
+| Document                                                           | Scope                                                                                                          | Status                                  |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| [model-gate-0-execution.md](engineering/model-gate-0-execution.md) | Gate ladder G1-G5, hardware deliverables, tolerance budget, model ingestion pipeline, RobStride CAN bench test | Accepted 2026-09-02                     |
+| [repository-bootstrap.md](engineering/repository-bootstrap.md)     | Monorepo layout, `ActuatorTransport` and `HumanoidActuatorSystem` contracts, CMake, containers, initial CI     | B1-B2 verified; B3 remote build pending |
+| [robot_model.schema.json](model/schema/robot_model.schema.json)    | Executable contract for the model source of truth. Draft 2020-12, behaviour-tested                             | Delivered 2026-09-02                    |
 
 ### How to extend this architecture
 

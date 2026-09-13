@@ -1,6 +1,8 @@
 # Repository Bootstrap and Scaffolding
 
-- Status: **Accepted.** Steps B1–B3 of section 7 are executed; the QL1 package set exists in `src/`.
+- Status: **Accepted.** B1 and B2 are implemented and verified. B3 is implemented locally; its
+  native dual-architecture build and GHCR digest publication are pending the first protected-main
+  workflow run.
 - Date: 2026-09-02
 - Scope: Monorepo layout, C++20 interface contracts, build system, container skeleton, and the initial CI workflow.
 - Depends on: [ADR-001](../architecture/ADR-001-real-time-actuation-and-hardware-abstraction.md), [ADR-002](../architecture/ADR-002-safety-and-fault-management.md), [ADR-006](../architecture/ADR-006-runtime-and-containers.md), [ADR-007](../architecture/ADR-007-simulation-sil-hil.md), [ADR-009](../architecture/ADR-009-development-workflow-and-cicd.md)
@@ -818,6 +820,23 @@ is not generous, and it has not been measured for this project's image.
 ---
 
 ## 7. Bootstrap order
+
+### Execution evidence as of 2026-09-13
+
+| Step | Evidence                                                                                                                                                                                                                                                                                                             | State                                    |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| B1   | Existing Git repository on `main` with `origin` configured; root `CODEOWNERS`; GitHub API read-back shows `main` requires one CODEOWNER approval, `pin-audit`, linear history, conversation resolution, and rejects force-push/deletion; Actions default token permissions are read-only and SHA pinning is required | **Verified**                             |
+| B2   | `tools/pin_audit.py`; `.github/workflows/pr.yml`; action refs are full 40-hex SHAs; local execution prints `pin audit passed`                                                                                                                                                                                        | **Verified**                             |
+| B3   | `docker/builder.Dockerfile`; exact PyPI pins for `colcon-common-extensions`, `rosdep`, and `vcstool`; native `ubuntu-24.04` / `ubuntu-24.04-arm` matrix in `.github/workflows/builder.yml`; multi-architecture manifest inspection step                                                                              | **Implemented; remote evidence pending** |
+
+The repository is currently private. The ADR-009 assumption that standard hosted arm64 jobs are
+free and unlimited for public repositories is therefore **not active for this repository**. This
+implementation does not change visibility automatically. The builder workflow must be run from a
+protected `main` commit before a GHCR digest can be recorded in downstream workflows.
+
+The local Docker daemon was unavailable during bootstrap, so no local image build is claimed. The
+first B3 run is itself the discriminating check: both matrix jobs must succeed, the manifest must be
+published, and `docker buildx imagetools inspect` must return one multi-architecture digest.
 
 | Step | Deliverable                                                                          | Depends on            |
 | ---- | ------------------------------------------------------------------------------------ | --------------------- |

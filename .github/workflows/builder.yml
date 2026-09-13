@@ -1,0 +1,72 @@
+name: builder
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docker/builder.Dockerfile
+      - model/generators/requirements.lock
+      - tools/pin_audit.py
+      - .github/workflows/builder.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: builder-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+            suffix: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            suffix: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - name: Build and push native platform image
+        run: >-
+          docker buildx build
+          --platform ${{ matrix.platform }}
+          --file docker/builder.Dockerfile
+          --tag ghcr.io/${{ github.repository }}/builder:${{ github.sha }}-${{ matrix.suffix }}
+          --provenance=true
+          --push
+          .
+
+  manifest:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - name: Publish multi-architecture builder manifest
+        run: >-
+          docker buildx imagetools create
+          --tag ghcr.io/${{ github.repository }}/builder:${{ github.sha }}
+          ghcr.io/${{ github.repository }}/builder:${{ github.sha }}-amd64
+          ghcr.io/${{ github.repository }}/builder:${{ github.sha }}-arm64
+      - name: Record immutable digest
+        run: >-
+          docker buildx imagetools inspect
+          ghcr.io/${{ github.repository }}/builder:${{ github.sha }}

@@ -45,7 +45,6 @@ jobs:
           --platform ${{ matrix.platform }}
           --file docker/builder.Dockerfile
           --tag ghcr.io/${{ github.repository }}/builder:${{ github.sha }}-${{ matrix.suffix }}
-          --provenance=true
           --push
           .
 

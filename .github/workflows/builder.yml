@@ -35,16 +35,21 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+
+      - name: Set lowercase repository name
+        run: echo "REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
       - name: Log in to GHCR
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
       - name: Build and push native platform image
         run: >-
           docker buildx build
           --platform ${{ matrix.platform }}
           --file docker/builder.Dockerfile
-          --tag ghcr.io/${{ github.repository }}/builder:${{ github.sha }}-${{ matrix.suffix }}
+          --tag ghcr.io/${{ env.REPO_LOWER }}/builder:${{ github.sha }}-${{ matrix.suffix }}
           --push
           .
 
@@ -55,17 +60,22 @@ jobs:
       contents: read
       packages: write
     steps:
+      - name: Set lowercase repository name
+        run: echo "REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
       - name: Log in to GHCR
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
       - name: Publish multi-architecture builder manifest
         run: >-
           docker buildx imagetools create
-          --tag ghcr.io/${{ github.repository }}/builder:${{ github.sha }}
-          ghcr.io/${{ github.repository }}/builder:${{ github.sha }}-amd64
-          ghcr.io/${{ github.repository }}/builder:${{ github.sha }}-arm64
+          --tag ghcr.io/${{ env.REPO_LOWER }}/builder:${{ github.sha }}
+          ghcr.io/${{ env.REPO_LOWER }}/builder:${{ github.sha }}-amd64
+          ghcr.io/${{ env.REPO_LOWER }}/builder:${{ github.sha }}-arm64
+
       - name: Record immutable digest
         run: >-
           docker buildx imagetools inspect
-          ghcr.io/${{ github.repository }}/builder:${{ github.sha }}
+          ghcr.io/${{ env.REPO_LOWER }}/builder:${{ github.sha }}
